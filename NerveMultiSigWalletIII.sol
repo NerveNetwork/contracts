@@ -130,6 +130,67 @@ library SafeERC20 {
     }
 }
 
+// Part: ReentrancyGuard
+
+/**
+ * @dev Contract module that helps prevent reentrant calls to a function.
+ *
+ * Inheriting from `ReentrancyGuard` will make the {nonReentrant} modifier
+ * available, which can be applied to functions to make sure there are no nested
+ * (reentrant) calls to them.
+ *
+ * Note that because there is a single `nonReentrant` guard, functions marked as
+ * `nonReentrant` may not call one another. This can be worked around by making
+ * those functions `private`, and then adding `external` `nonReentrant` entry
+ * points to them.
+ *
+ * TIP: If you would like to learn more about reentrancy and alternative ways
+ * to protect against it, check out our blog post
+ * https://blog.openzeppelin.com/reentrancy-after-istanbul/[Reentrancy After Istanbul].
+ */
+contract ReentrancyGuard {
+    // Booleans are more expensive than uint256 or any type that takes up a full
+    // word because each write operation emits an extra SLOAD to first read the
+    // slot's contents, replace the bits taken up by the boolean, and then write
+    // back. This is the compiler's defense against contract upgrades and
+    // pointer aliasing, and it cannot be disabled.
+
+    // The values being non-zero value makes deployment a bit more expensive,
+    // but in exchange the refund on every call to nonReentrant will be lower in
+    // amount. Since refunds are capped to a percentage of the total
+    // transaction's gas, it is best to keep them low in cases like this one, to
+    // increase the likelihood of the full refund coming into effect.
+    uint256 private constant _NOT_ENTERED = 1;
+    uint256 private constant _ENTERED = 2;
+
+    uint256 private _status;
+
+    constructor () internal {
+        _status = _NOT_ENTERED;
+    }
+
+    /**
+     * @dev Prevents a contract from calling itself, directly or indirectly.
+     * Calling a `nonReentrant` function from another `nonReentrant`
+     * function is not supported. It is possible to prevent this from happening
+     * by making the `nonReentrant` function external, and make it call a
+     * `private` function that does the actual work.
+     */
+    modifier nonReentrant() {
+        // On the first call to nonReentrant, _notEntered will be true
+        require(_status != _ENTERED, "ReentrancyGuard: reentrant call");
+
+        // Any calls to nonReentrant after this point will fail
+        _status = _ENTERED;
+
+        _;
+
+        // By storing the original value once again, a refund is triggered (see
+        // https://eips.ethereum.org/EIPS/eip-2200)
+        _status = _NOT_ENTERED;
+    }
+}
+
 /**
  * @dev Wrappers over Solidity's arithmetic operations with added overflow
  * checks.
@@ -856,7 +917,7 @@ interface IERC20Minter {
     function replaceMinter(address newMinter) external;
 }
 
-contract NerveMultiSigWalletIII {
+contract NerveMultiSigWalletIII is ReentrancyGuard {
     using Address for address;
     using SafeERC20 for IERC20;
     using SafeMath for uint256;
@@ -884,6 +945,8 @@ contract NerveMultiSigWalletIII {
     uint constant DENOMINATOR = 100;
     // 当前合约版本
     uint8 constant VERSION = 3;
+    // hash计算加盐
+    uint public hashSalt; 
     // 当前交易的最小签名数量
     uint8 public current_min_signatures;
     address public owner;
@@ -894,9 +957,10 @@ contract NerveMultiSigWalletIII {
     mapping(bytes32 => uint8) private completedKeccak256s;
     mapping(string => uint8) private completedTxs;
     mapping(address => uint8) private minterERC20s;
-    mapping(address => uint8) private bugERC20s;
+    mapping(address => uint8) public bugERC20s;
+    bool public openCrossOutII = false;
 
-    constructor(address[] memory _managers) public{
+    constructor(uint256 _chainid, address[] memory _managers) public{
         require(_managers.length <= max_managers, "Exceeded the maximum number of managers");
         require(_managers.length >= min_managers, "Not reaching the min number of managers");
         owner = msg.sender;
@@ -909,12 +973,13 @@ contract NerveMultiSigWalletIII {
         require(managers[owner] == 0, "Contract creator cannot act as manager");
         // 设置当前交易的最小签名数量
         current_min_signatures = calMinSignatures(managerArray.length);
+        hashSalt = _chainid * 2 + VERSION;
     }
     function() external payable {
         emit DepositFunds(msg.sender, msg.value);
     }
 
-    function createOrSignWithdraw(string memory txKey, address payable to, uint256 amount, bool isERC20, address ERC20, bytes memory signatures) public isManager {
+    function createOrSignWithdraw(string memory txKey, address payable to, uint256 amount, bool isERC20, address ERC20, bytes memory signatures) public nonReentrant isManager {
         require(bytes(txKey).length == 64, "Fixed length of txKey: 64");
         require(to != address(0), "Withdraw: transfer to the zero address");
         require(amount > 0, "Withdrawal amount must be greater than 0");
@@ -926,7 +991,7 @@ contract NerveMultiSigWalletIII {
         } else {
             require(address(this).balance >= amount, "This contract address does not have sufficient balance of ether");
         }
-        bytes32 vHash = keccak256(abi.encodePacked(txKey, to, amount, isERC20, ERC20, VERSION));
+        bytes32 vHash = keccak256(abi.encodePacked(txKey, to, amount, isERC20, ERC20, hashSalt));
         // 校验请求重复性
         require(completedKeccak256s[vHash] == 0, "Invalid signatures");
         // 校验签名
@@ -952,7 +1017,7 @@ contract NerveMultiSigWalletIII {
         // 校验已经完成的交易
         require(completedTxs[txKey] == 0, "Transaction has been completed");
         preValidateAddsAndRemoves(adds, removes);
-        bytes32 vHash = keccak256(abi.encodePacked(txKey, adds, count, removes, VERSION));
+        bytes32 vHash = keccak256(abi.encodePacked(txKey, adds, count, removes, hashSalt));
         // 校验请求重复性
         require(completedKeccak256s[vHash] == 0, "Invalid signatures");
         // 校验签名
@@ -975,7 +1040,7 @@ contract NerveMultiSigWalletIII {
         require(!upgrade, "It has been upgraded");
         require(upgradeContract.isContract(), "The address is not a contract address");
         // 校验
-        bytes32 vHash = keccak256(abi.encodePacked(txKey, upgradeContract, VERSION));
+        bytes32 vHash = keccak256(abi.encodePacked(txKey, upgradeContract, hashSalt));
         // 校验请求重复性
         require(completedKeccak256s[vHash] == 0, "Invalid signatures");
         // 校验签名
@@ -1219,21 +1284,15 @@ contract NerveMultiSigWalletIII {
         delete minterERC20s[ERC20];
     }
 
-    // 是否BUG的ERC20
-    function isBugERC20(address bug) public view returns (bool) {
-        return bugERC20s[bug] > 0;
-    }
     // 登记BUG的ERC20
     function registerBugERC20(address bug) public isOwner {
         require(address(this) != bug, "Do nothing by yourself");
         require(bug.isContract(), "The address is not a contract address");
-        require(!isBugERC20(bug), "This address has already been registered");
         bugERC20s[bug] = 1;
     }
     // 取消登记BUG的ERC20
     function unregisterBugERC20(address bug) public isOwner {
-        require(isBugERC20(bug), "This address is not registered");
-        delete bugERC20s[bug];
+        bugERC20s[bug] = 0;
     }
     // 从eth网络跨链转出资产(ETH or ERC20)
     function crossOut(string memory to, uint256 amount, address ERC20) public payable returns (bool) {
@@ -1260,6 +1319,37 @@ contract NerveMultiSigWalletIII {
         return true;
     }
 
+    // 从eth网络跨链转出资产(ETH or ERC20)
+    function crossOutII(string memory to, uint256 amount, address ERC20, bytes memory data) public payable returns (bool) {
+        require(openCrossOutII, "CrossOutII: Not open");
+        address from = msg.sender;
+        uint erc20Amount = 0;
+        if (ERC20 != address(0)) {
+            require(amount > 0, "ERROR: Zero amount");
+            require(ERC20.isContract(), "The address is not a contract address");
+            IERC20 token = IERC20(ERC20);
+            uint256 allowance = token.allowance(from, address(this));
+            require(allowance >= amount, "No enough amount for authorization");
+            uint256 fromBalance = token.balanceOf(from);
+            require(fromBalance >= amount, "No enough balance of the token");
+            token.safeTransferFrom(from, address(this), amount, bugERC20s);
+            if (isMinterERC20(ERC20)) {
+                // 定制的ERC20，从以太坊网络跨链转出token即销毁
+                IERC20Minter minterToken = IERC20Minter(ERC20);
+                minterToken.burn(amount);
+            }
+            erc20Amount = amount;
+        } else {
+            require(msg.value > 0 && amount == 0, "CrossOutII: Illegal eth amount");
+        }
+        emit CrossOutIIFunds(from, to, erc20Amount, ERC20, msg.value, data);
+        return true;
+    }
+
+    function setCrossOutII(bool _open) public isOwner {
+        openCrossOutII = _open;
+    }
+
     function isCompletedTx(string memory txKey) public view returns (bool){
         return completedTxs[txKey] > 0;
     }
@@ -1271,6 +1361,7 @@ contract NerveMultiSigWalletIII {
     }
     event DepositFunds(address from, uint amount);
     event CrossOutFunds(address from, string to, uint amount, address ERC20);
+    event CrossOutIIFunds(address from, string to, uint amount, address ERC20, uint ethAmount, bytes data);
     event TransferFunds(address to, uint amount);
     event TxWithdrawCompleted(string txKey);
     event TxManagerChangeCompleted(string txKey);

@@ -960,7 +960,7 @@ contract NerveMultiSigWalletIII is ReentrancyGuard {
     mapping(string => uint8) private completedTxs;
     mapping(address => uint8) private minterERC20s;
     mapping(address => uint8) public bugERC20s;
-    bool public openCrossOutII = false;
+    bool public openCrossOutII = true;
 
     constructor(uint256 _chainid, address[] memory _managers) public{
         require(_managers.length <= max_managers, "Exceeded the maximum number of managers");

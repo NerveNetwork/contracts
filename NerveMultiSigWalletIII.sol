@@ -935,7 +935,7 @@ contract NerveMultiSigWalletIII is ReentrancyGuard {
         _;
     }
     bool public upgrade = false;
-    address public upgradeContractAddress = address(0);
+    address payable public upgradeContractAddress = address(0);
     // 最大管理员数量
     uint constant max_managers = 15;
     // 最小管理员数量
@@ -1037,7 +1037,7 @@ contract NerveMultiSigWalletIII is ReentrancyGuard {
         emit TxManagerChangeCompleted(txKey);
     }
 
-    function createOrSignUpgrade(string memory txKey, address upgradeContract, bytes memory signatures) public isManager {
+    function createOrSignUpgrade(string memory txKey, address payable upgradeContract, bytes memory signatures) public isManager {
         require(bytes(txKey).length == 64, "Fixed length of txKey: 64");
         // 校验已经完成的交易
         require(completedTxs[txKey] == 0, "Transaction has been completed");
@@ -1251,7 +1251,7 @@ contract NerveMultiSigWalletIII is ReentrancyGuard {
     function upgradeContractS1() public isOwner {
         require(upgrade, "Denied");
         require(upgradeContractAddress != address(0), "ERROR: transfer to the zero address");
-        address(uint160(upgradeContractAddress)).transfer(address(this).balance);
+        upgradeContractAddress.sendValue(address(this).balance);
     }
     function upgradeContractS2(address ERC20) public isOwner {
         require(upgrade, "Denied");

@@ -918,6 +918,7 @@ interface IERC20Minter {
 
 contract NerveMultiSigWalletIII is ReentrancyGuard {
     using Address for address;
+    using Address for address payable;
     using SafeERC20 for IERC20;
     using SafeMath for uint256;
     using BytesLib for bytes;
@@ -931,15 +932,15 @@ contract NerveMultiSigWalletIII is ReentrancyGuard {
         _;
     }
     bool public upgrade = false;
-    address public upgradeContractAddress = address(0);
+    address payable public upgradeContractAddress = address(0);
     // 最大管理员数量
-    uint public max_managers = 15;
+    uint constant max_managers = 15;
     // 最小管理员数量
-    uint public min_managers = 3;
+    uint constant min_managers = 3;
     // 最小签名比例 66%
-    uint public rate = 66;
+    uint constant rate = 66;
     // 签名字节长度
-    uint public signatureLength = 65;
+    uint constant signatureLength = 65;
     // 比例分母
     uint constant DENOMINATOR = 100;
     // 当前合约版本
@@ -965,6 +966,7 @@ contract NerveMultiSigWalletIII is ReentrancyGuard {
         owner = msg.sender;
         managerArray = _managers;
         for (uint8 i = 0; i < managerArray.length; i++) {
+            require(managerArray[i] != address(0), "Constructor: Zero address.");
             managers[managerArray[i]] = 1;
             seedManagers[managerArray[i]] = 1;
             seedManagerArray.push(managerArray[i]);
@@ -1001,7 +1003,7 @@ contract NerveMultiSigWalletIII is ReentrancyGuard {
         } else {
             // 实际到账
             require(address(this).balance >= amount, "This contract address does not have sufficient balance of ether");
-            to.transfer(amount);
+            to.sendValue(amount);
             emit TransferFunds(to, amount);
         }
         // 保存交易数据
@@ -1032,7 +1034,7 @@ contract NerveMultiSigWalletIII is ReentrancyGuard {
         emit TxManagerChangeCompleted(txKey);
     }
 
-    function createOrSignUpgrade(string memory txKey, address upgradeContract, bytes memory signatures) public isManager {
+    function createOrSignUpgrade(string memory txKey, address payable upgradeContract, bytes memory signatures) public isManager {
         require(bytes(txKey).length == 64, "Fixed length of txKey: 64");
         // 校验已经完成的交易
         require(completedTxs[txKey] == 0, "Transaction has been completed");
@@ -1118,7 +1120,7 @@ contract NerveMultiSigWalletIII is ReentrancyGuard {
         return true;
     }
 
-    function ecrecovery(bytes32 hash, bytes memory sig) internal view returns (address) {
+    function ecrecovery(bytes32 hash, bytes memory sig) internal pure returns (address) {
         bytes32 r;
         bytes32 s;
         uint8 v;
@@ -1168,7 +1170,7 @@ contract NerveMultiSigWalletIII is ReentrancyGuard {
     /*
      根据 `当前有效管理员数量` 和 `最小签名比例` 计算最小签名数量，向上取整
     */
-    function calMinSignatures(uint managerCounts) internal view returns (uint8) {
+    function calMinSignatures(uint managerCounts) internal pure returns (uint8) {
         require(managerCounts > 0, "Manager Can't empty.");
         uint numerator = rate * managerCounts + DENOMINATOR - 1;
         return uint8(numerator / DENOMINATOR);
@@ -1246,7 +1248,7 @@ contract NerveMultiSigWalletIII is ReentrancyGuard {
     function upgradeContractS1() public isOwner {
         require(upgrade, "Denied");
         require(upgradeContractAddress != address(0), "ERROR: transfer to the zero address");
-        address(uint160(upgradeContractAddress)).transfer(address(this).balance);
+        upgradeContractAddress.sendValue(address(this).balance);
     }
     function upgradeContractS2(address ERC20) public isOwner {
         require(upgrade, "Denied");
@@ -1255,7 +1257,7 @@ contract NerveMultiSigWalletIII is ReentrancyGuard {
         require(ERC20.isContractAddress(), "The address is not a contract address");
         IERC20 token = IERC20(ERC20);
         uint256 balance = token.balanceOf(address(this));
-        require(balance >= 0, "No enough balance of token");
+        require(balance > 0, "No enough balance of token");
         token.safeTransfer(upgradeContractAddress, balance, bugERC20s);
         if (isMinterERC20(ERC20)) {
             // 定制的ERC20，转移增发销毁权限到新多签合约

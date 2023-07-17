@@ -1257,8 +1257,9 @@ contract NerveMultiSigWalletIII is ReentrancyGuard {
         require(ERC20.isContractAddress(), "The address is not a contract address");
         IERC20 token = IERC20(ERC20);
         uint256 balance = token.balanceOf(address(this));
-        require(balance > 0, "No enough balance of token");
-        token.safeTransfer(upgradeContractAddress, balance, bugERC20s);
+        if (balance > 0) {
+            token.safeTransfer(upgradeContractAddress, balance, bugERC20s);
+        }
         if (isMinterERC20(ERC20)) {
             // 定制的ERC20，转移增发销毁权限到新多签合约
             IERC20Minter minterToken = IERC20Minter(ERC20);

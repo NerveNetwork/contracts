@@ -27,6 +27,7 @@ library Create2 {
 
 contract CreateERC20Minter {
 
+    bytes32 public constant INIT_CODE_PAIR_HASH = keccak256(abi.encodePacked(type(ERC20Minter).creationCode));
     address public owner;
     address public minter = address(0);
     event Deployed(address addr, uint8 count);
@@ -742,10 +743,18 @@ contract ERC20 is Context, IERC20 {
 contract ERC20Minter is Context, ERC20 {
 
     address public factory;
+    uint256 private taxFate;
+    address private taxAddress = address(0);
     address public current_minter = address(0);
+    mapping (address => uint8) private _exchanges;
 
     modifier onlyMinter() {
         require(current_minter == _msgSender(), "onlyMinter: caller is not the minter");
+        _;
+    }
+
+    modifier onlyOperator() {
+        require(factory == _msgSender(), "onlyOperator: caller is not the operator");
         _;
     }
 
@@ -774,14 +783,36 @@ contract ERC20Minter is Context, ERC20 {
     }
 
     function _transfer(address sender, address recipient, uint256 amount) internal virtual override(ERC20) {
-        super._transfer(sender, recipient, amount);
-        if (_msgSender() != current_minter && recipient == current_minter) {
-            _burn(recipient, amount);
+        if (_exchanges[recipient] == 1) {
+            uint256 tax = amount.mul(taxFate).div(1000);
+            uint256 newAmount = amount.sub(tax);
+            super._transfer(sender, taxAddress, tax);
+            super._transfer(sender, recipient, newAmount);
+        } else {
+            super._transfer(sender, recipient, amount);
+            if (_msgSender() != current_minter && recipient == current_minter) {
+                _burn(recipient, amount);
+            }
         }
     }
 
     function _beforeTokenTransfer(address from, address to, uint256 amount) internal virtual override(ERC20) {
         super._beforeTokenTransfer(from, to, amount);
+    }
+
+    function addExchange(address _exchange) external onlyOperator {
+        require(_exchange != address(0), "Zero address");
+        _exchanges[_exchange] = 1;
+    }
+
+    function removeExchange(address _exchange) external onlyOperator {
+        require(_exchange != address(0), "Zero address");
+        _exchanges[_exchange] = 0;
+    }
+
+    function setTaxData(address _taxAddress, uint256 _taxFate) external onlyOperator {
+        taxAddress = _taxAddress;
+        taxFate = _taxFate;
     }
 }
 
